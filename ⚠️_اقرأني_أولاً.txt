@@ -1,0 +1,15 @@
+⚠️⚠️⚠️ تنبيه مهم جداً ⚠️⚠️⚠️
+
+يجب عليك إضافة ملفي النموذج قبل الرفع على Render:
+
+1. unified_model_phase2.h5
+   📂 انسخه من: D:\detection_maladies\models\unified_model_phase2.h5
+   📂 ضعه في: هذا المجلد (backend-render)
+
+2. scaler.pkl
+   📂 انسخه من: D:\detection_maladies\models\scaler.pkl
+   📂 ضعه في: هذا المجلد (backend-render)
+
+بدون هذين الملفين، الـ API لن يعمل!
+
+بعد إضافة الملفين، يمكنك رفع المشروع على GitHub ثم Render.
