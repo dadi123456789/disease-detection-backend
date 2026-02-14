@@ -12,6 +12,7 @@ from tensorflow import keras
 import joblib
 import os
 import io
+import tempfile
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
@@ -173,16 +174,26 @@ def extract_features_phase1(audio):
 def load_audio_file(audio_bytes):
     """
     تحميل الصوت من bytes (من Android)
-    منسوخة من utils.py مع تعديل للـ bytes
+    يدعم جميع الصيغ عبر حفظ مؤقت
     """
     try:
-        # تحميل من bytes
-        audio, sr = librosa.load(
-            io.BytesIO(audio_bytes),
-            sr=SAMPLE_RATE,
-            mono=True,
-            duration=None
-        )
+        # حفظ مؤقت للملف (librosa يحتاج ملف حقيقي لصيغ مثل 3GP)
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.audio') as tmp_file:
+            tmp_file.write(audio_bytes)
+            tmp_path = tmp_file.name
+        
+        try:
+            # تحميل من الملف المؤقت
+            audio, sr = librosa.load(
+                tmp_path,
+                sr=SAMPLE_RATE,
+                mono=True,
+                duration=None
+            )
+        finally:
+            # حذف الملف المؤقت
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
         
         if len(audio) == 0:
             return None
