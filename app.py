@@ -1,7 +1,7 @@
 """
 app.py - Flask Backend لنظام الكشف عن الأمراض الصوتية
 ═══════════════════════════════════════════════════════════════
-تم نسخ جميع الإعدادات بدقة من أكواد المستخدم الأصلية
+محسّن لتقليل استهلاك RAM - يعمل على Render Free Plan
 """
 
 from flask import Flask, request, jsonify
@@ -12,33 +12,36 @@ from tensorflow import keras
 import joblib
 import os
 import io
-import tempfile
-from werkzeug.utils import secure_filename
+import gc
+
+# تحسين استهلاك TensorFlow للذاكرة
+os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 app = Flask(__name__)
-CORS(app)  # السماح للـ Android بالوصول
+CORS(app)
 
 # ═══════════════════════════════════════════════════════════════
-# الإعدادات - منسوخة بدقة من config.py
+# الإعدادات
 # ═══════════════════════════════════════════════════════════════
 
 # PARAMÈTRES AUDIO
-SAMPLE_RATE = 16000          # ⚠️ بالضبط من أكوادك
-DURATION = 6                 # ⚠️ بالضبط من أكوادك
+SAMPLE_RATE = 16000
+DURATION = 6
 NORMALIZE_AUDIO = True
 
 # PARAMÈTRES FEATURES
-N_MELS = 128                 # ⚠️ بالضبط من أكوادك
-N_FFT = 1024                 # ⚠️ بالضبط من أكوادك
-HOP_LENGTH = 512             # ⚠️ بالضبط من أكوادك
-FMIN = 50                    # ⚠️ بالضبط من أكوادك
-FMAX = 8000                  # ⚠️ بالضبط من أكوادك
-N_MFCC = 13                  # ⚠️ بالضبط من أكوادك
-N_CHROMA = 12                # ⚠️ بالضبط من أكوادك
+N_MELS = 128
+N_FFT = 1024
+HOP_LENGTH = 512
+FMIN = 50
+FMAX = 8000
+N_MFCC = 13
+N_CHROMA = 12
 
 # Shape attendu
-EXPECTED_N_FEATURES = 153    # 128 + 13 + 12
-EXPECTED_TIME_FRAMES = 186   # ⚠️ بالضبط من أكوادك
+EXPECTED_N_FEATURES = 153
+EXPECTED_TIME_FRAMES = 186
 
 # Classes de maladies
 DISEASE_CLASSES = [
@@ -78,44 +81,37 @@ try:
     model = keras.models.load_model('unified_model_phase2.h5')
     scaler = joblib.load('scaler.pkl')
     print("✅ Model and scaler loaded successfully!")
+    gc.collect()  # تنظيف الذاكرة بعد التحميل
 except Exception as e:
     print(f"❌ Error loading model: {e}")
     raise
 
 # ═══════════════════════════════════════════════════════════════
-# الوظائف - منسوخة بدقة من utils.py
+# الوظائف
 # ═══════════════════════════════════════════════════════════════
 
 def preprocess_audio(audio, target_length=None):
-    """
-    منسوخة بدقة 100% من utils.py
-    """
+    """معالجة طول الصوت"""
     if target_length is None:
         target_length = SAMPLE_RATE * DURATION
     
     current_length = len(audio)
     
     if current_length < target_length:
-        # Padding: répéter le signal
         n_repeats = int(np.ceil(target_length / current_length))
         audio = np.tile(audio, n_repeats)[:target_length]
     elif current_length > target_length:
-        # Truncation: prendre le centre
         start = (current_length - target_length) // 2
         audio = audio[start:start + target_length]
     
-    assert len(audio) == target_length, "Erreur prétraitement audio"
     return audio
 
 
 def extract_features_phase1(audio):
-    """
-    منسوخة بدقة 100% من utils.py
-    Extrait EXACTEMENT les mêmes features que Phase 1
-    """
+    """استخراج Features"""
     features_list = []
     
-    # 1. Mel Spectrogram (128 features)
+    # 1. Mel Spectrogram
     mel_spec = librosa.feature.melspectrogram(
         y=audio,
         sr=SAMPLE_RATE,
@@ -128,7 +124,7 @@ def extract_features_phase1(audio):
     mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
     features_list.append(mel_spec_db)
     
-    # 2. MFCC (13 features)
+    # 2. MFCC
     mfcc = librosa.feature.mfcc(
         y=audio,
         sr=SAMPLE_RATE,
@@ -138,7 +134,7 @@ def extract_features_phase1(audio):
     )
     features_list.append(mfcc)
     
-    # 3. Chroma (12 features)
+    # 3. Chroma
     chroma = librosa.feature.chroma_stft(
         y=audio,
         sr=SAMPLE_RATE,
@@ -148,52 +144,33 @@ def extract_features_phase1(audio):
     )
     features_list.append(chroma)
     
-    # Combiner verticalement
+    # Combiner
     features = np.vstack(features_list)
     
-    # Vérification critique du shape
-    expected_shape = (EXPECTED_N_FEATURES, EXPECTED_TIME_FRAMES)
-    
-    # Si time dimension différente, forcer à 186 frames
+    # Ajuster à 186 frames
     if features.shape[1] != EXPECTED_TIME_FRAMES:
         if features.shape[1] < EXPECTED_TIME_FRAMES:
-            # Pad with zeros
             pad_width = EXPECTED_TIME_FRAMES - features.shape[1]
             features = np.pad(features, ((0, 0), (0, pad_width)), mode='constant')
         else:
-            # Truncate
             features = features[:, :EXPECTED_TIME_FRAMES]
-    
-    # Vérification finale
-    assert features.shape == expected_shape, \
-        f"❌ Shape invalide! Attendu {expected_shape}, reçu {features.shape}"
     
     return features
 
 
 def load_audio_file(audio_bytes):
     """
-    تحميل الصوت من bytes (من Android)
-    يدعم جميع الصيغ عبر حفظ مؤقت
+    تحميل الصوت من bytes - محسّن للـ RAM
+    يعمل مباشرة مع WAV بدون temp files
     """
     try:
-        # حفظ مؤقت للملف (librosa يحتاج ملف حقيقي لصيغ مثل 3GP)
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.audio') as tmp_file:
-            tmp_file.write(audio_bytes)
-            tmp_path = tmp_file.name
-        
-        try:
-            # تحميل من الملف المؤقت
-            audio, sr = librosa.load(
-                tmp_path,
-                sr=SAMPLE_RATE,
-                mono=True,
-                duration=None
-            )
-        finally:
-            # حذف الملف المؤقت
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
+        # تحميل مباشرة من BytesIO (أخف على الذاكرة)
+        audio, sr = librosa.load(
+            io.BytesIO(audio_bytes),
+            sr=SAMPLE_RATE,
+            mono=True,
+            duration=None
+        )
         
         if len(audio) == 0:
             return None
@@ -202,7 +179,7 @@ def load_audio_file(audio_bytes):
         if NORMALIZE_AUDIO:
             audio = librosa.util.normalize(audio)
         
-        # Prétraiter pour obtenir longueur exacte
+        # Prétraiter
         audio = preprocess_audio(audio)
         
         return audio
@@ -213,9 +190,7 @@ def load_audio_file(audio_bytes):
 
 
 def predict_audio(audio):
-    """
-    منسوخة من 09_unified_prediction.py
-    """
+    """التنبؤ بالمرض"""
     try:
         # 1. Extraction features
         features = extract_features_phase1(audio)
@@ -231,6 +206,9 @@ def predict_audio(audio):
         
         # 4. Prédiction
         predictions = model.predict(features_final, verbose=0)
+        
+        # تنظيف الذاكرة فوراً بعد التنبؤ
+        gc.collect()
         
         # 5. Extraction résultats
         if isinstance(predictions, dict):
@@ -314,9 +292,7 @@ def health():
 
 @app.route('/predict', methods=['POST'])
 def predict():
-    """
-    استقبال الصوت من Android والتنبؤ
-    """
+    """استقبال الصوت من Android والتنبؤ"""
     try:
         # 1. التحقق من وجود ملف
         if 'audio' not in request.files:
@@ -348,9 +324,13 @@ def predict():
         # 4. التنبؤ
         result = predict_audio(audio)
         
+        # تنظيف نهائي
+        gc.collect()
+        
         return jsonify(result)
         
     except Exception as e:
+        gc.collect()
         return jsonify({
             'success': False,
             'error': str(e)
