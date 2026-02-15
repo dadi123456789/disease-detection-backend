@@ -75,13 +75,18 @@ DISEASE_ICONS = {
 # ═══════════════════════════════════════════════════════════════
 # تحميل النموذج والـ Scaler
 # ═══════════════════════════════════════════════════════════════
-
+import time
+start_time = time.time()
 print("🔄 Loading model and scaler...")
 try:
     model = keras.models.load_model('unified_model_phase2.h5')
     scaler = joblib.load('scaler.pkl')
     print("✅ Model and scaler loaded successfully!")
-    gc.collect()  # تنظيف الذاكرة بعد التحميل
+    print("✅ Model and scaler loaded successfully!")
+    print(f"⏱️ Worker ready in {time.time() - start_time:.1f}s")
+    gc.collect()
+
+
 except Exception as e:
     print(f"❌ Error loading model: {e}")
     raise
